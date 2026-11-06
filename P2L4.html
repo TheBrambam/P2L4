@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Level 4 — Lighting, Cube Landscape and Bézier Sky</title>
+  <style>
+    /* Set predictable box measurements across the interface. */
+    * { box-sizing: border-box; }
+    /* Style the page background, text, and overall typography. */
+    body { margin: 0; background: #0a1424; color: #edf5ff; font: 15px/1.5 system-ui, sans-serif; }
+    /* HEADER: This section holds the project title, author, and description. */
+    header { padding: 20px max(20px, calc((100vw - 1100px)/2)); background: #132740; border-bottom: 1px solid #375373; }
+    header h1 { margin: 0 0 5px; font-size: clamp(1.5rem, 3vw, 2.15rem); }
+    header p { margin: 4px 0; color: #c6dbf0; }
+    /* Limit content width, leaving room around the canvas. */
+    main { max-width: 1140px; margin: auto; padding: 18px 20px 30px; }
+    /* Lay out controls horizontally, wrapping on narrow screens. */
+    .controls { display: flex; align-items: end; flex-wrap: wrap; gap: 14px 22px; margin-bottom: 12px; }
+    /* Place each control label directly above its input. */
+    .control { display: flex; flex-direction: column; gap: 4px; }
+    /* Give keyboard-accessible controls visible, readable styling. */
+    select, button { padding: 9px 12px; color: #f4f9ff; background: #234665; border: 1px solid #6d93b4; border-radius: 8px; font: inherit; cursor: pointer; }
+    select:focus-visible, button:focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
+    label { color: #d2e4f6; }
+    /* CAMERA TARGET SLIDERS: Each slider changes one coordinate of the look-at point. */
+    .camera-controls { margin: 2px 0 16px; padding: 14px 16px; border: 1px solid #466783; border-radius: 10px; background: #10233a; }
+    .camera-controls h2 { margin: 0 0 10px; font-size: 1.05rem; }
+    .slider-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 20px; }
+    .slider-control { display: flex; flex-direction: column; gap: 4px; }
+    .slider-control input { width: 100%; accent-color: #64c8ee; cursor: pointer; }
+    .camera-controls button { margin-top: 12px; }
+    .camera-readout { font-variant-numeric: tabular-nums; color: #badff5; }
+    /* LIGHTING CONTROLS: Responsive sliders for real-time ambient/directional illumination. */
+    .lighting-controls { margin: 0 0 16px; padding: 14px 16px; border: 1px solid #567e92; border-radius: 10px; background: #10283c; }
+    .lighting-controls h2 { margin: 0 0 10px; font-size: 1.05rem; }
+    .lighting-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(195px, 1fr)); gap: 12px 20px; }
+    .lighting-grid label { display: flex; flex-direction: column; gap: 5px; }
+    .lighting-grid input[type="range"] { width: 100%; accent-color: #ffca72; }
+    .lighting-grid output { color: #ffdfac; font-variant-numeric: tabular-nums; }
+    .lighting-actions { margin-top: 13px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .lighting-actions label { display: inline-flex; align-items: center; gap: 8px; }
+    .lighting-actions input { accent-color: #ffca72; }
+    /* SKY CONTROLS: Movement speed and play/pause for the cube-built objects. */
+    .sky-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; margin: 0 0 16px; padding: 12px 16px; border: 1px solid #466783; border-radius: 10px; background: #10233a; }
+    .sky-controls label { display: flex; align-items: center; gap: 10px; }
+    .sky-controls input[type="range"] { width: 145px; accent-color: #f1ba78; }
+    .sky-controls output { min-width: 2.8em; font-variant-numeric: tabular-nums; }
+    details { background: #10233a; border: 1px solid #466783; border-radius: 10px; padding: 12px 16px; margin-top: 16px; }
+    details summary { cursor: pointer; font-weight: 700; }
+    details p { color: #c6dcee; }
+    /* CANVAS: WebGL renders the 3D landscape into this area. */
+    canvas { display: block; width: 100%; height: min(65vh, 640px); min-height: 330px; border: 1px solid #466783; border-radius: 12px; background: #081321; }
+    /* Display the measured frames per second and grid information. */
+    #status { color: #c4dcf2; min-height: 1.5em; }
+    .note { color: #a9c1d9; font-size: .93rem; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Level 4 — Illuminated Cube Landscape &amp; Animated Sky</h1>
+    <p><strong>Created by:</strong> Anthony</p>
+    <p><strong>About the project:</strong> Level 3 cube terrain and animated sky, now illuminated by adjustable directional sunlight, ambient fill, and specular highlights.</p>
+  </header>
+ 
+
+  <!-- MAIN APPLICATION: Controls, scene, and performance display. -->
+  <main>
+    <div class="controls">
+      <div class="control">
+        <label for="resolution">Grid resolution (x × z)</label>
+        <select id="resolution">
+          <option value="12">12 × 12 (144 cubes)</option>
+          <option value="24" selected>24 × 24 (576 cubes)</option>
+          <option value="40">40 × 40 (1,600 cubes)</option>
+          <option value="64">64 × 64 (4,096 cubes)</option>
+        </select>
+      </div>
+      <div class="control">
+        <label for="quality">Rendering quality</label>
+        <select id="quality">
+          <option value="high" selected>High resolution</option>
+          <option value="low">Low resolution (older devices)</option>
+        </select>
+      </div>
+      <button id="regenerate" type="button">Regenerate landscape</button>
+      <button id="pause" type="button">Pause camera</button>
+    </div>
+    <!-- PART D: Each slider controls one world-space coordinate of the camera look-at target. -->
+    <section class="camera-controls" aria-labelledby="cameraHeading">
+      <h2 id="cameraHeading">Camera look-at target (Part D)</h2>
+      <div class="slider-grid">
+        <label class="slider-control" for="targetX">X (left / right): <output id="targetXValue" for="targetX">0.0</output>
+          <input id="targetX" type="range" min="-30" max="30" step="0.5" value="0">
+        </label>
+        <label class="slider-control" for="targetY">Y (down / up): <output id="targetYValue" for="targetY">0.0</output>
+          <input id="targetY" type="range" min="-5" max="15" step="0.5" value="0">
+        </label>
+        <label class="slider-control" for="targetZ">Z (back / forward): <output id="targetZValue" for="targetZ">0.0</output>
+          <input id="targetZ" type="range" min="-30" max="30" step="0.5" value="0">
+        </label>
+      </div>
+      <button id="resetTarget" type="button">Reset look-at to (0, 0, 0)</button>
+      <p class="camera-readout" id="targetReadout">Current target: (0.0, 0.0, 0.0)</p>
+    </section>
+    <!-- LEVEL 3 CONTROLS: Independent playback and speed control for animated sky objects. -->
+    <section class="sky-controls" aria-label="Sky object animation controls">
+      <strong>Level 3: Animated sky</strong>
+      <label for="skySpeed">Motion speed
+        <input id="skySpeed" type="range" min="0" max="3" step="0.25" value="1">
+        <output id="skySpeedValue" for="skySpeed">1.00×</output>
+      </label>
+      <button id="pauseSky" type="button">Pause sky objects</button>
+    </section>
+    <!-- LEVEL 4 LIGHTING: Controls map to uniforms consumed by the fragment shader. -->
+    <section class="lighting-controls" aria-labelledby="lightHeading">
+      <h2 id="lightHeading">Level 4: Real-time lighting</h2>
+      <div class="lighting-grid">
+        <label for="lightAzimuth">Sun direction (azimuth): <output id="lightAzimuthOut">45°</output>
+          <input id="lightAzimuth" type="range" min="0" max="360" step="1" value="45">
+        </label>
+        <label for="lightElevation">Sun elevation: <output id="lightElevationOut">50°</output>
+          <input id="lightElevation" type="range" min="0" max="90" step="1" value="50">
+        </label>
+        <label for="ambientLevel">Ambient brightness: <output id="ambientOut">0.30</output>
+          <input id="ambientLevel" type="range" min="0" max="1" step="0.05" value="0.30">
+        </label>
+        <label for="sunStrength">Sun brightness: <output id="sunStrengthOut">0.90</output>
+          <input id="sunStrength" type="range" min="0" max="2" step="0.05" value="0.90">
+        </label>
+      </div>
+      <div class="lighting-actions">
+        <label for="lightingEnabled"><input id="lightingEnabled" type="checkbox" checked> Enable lighting</label>
+        <button id="resetLighting" type="button">Reset lighting</button>
+      </div>
+    </section>
+    <!-- WEBGL CANVAS: Browser drawing surface for the GPU-rendered scene. -->
+    <canvas id="scene" aria-label="3D landscape of cubes with an orbiting camera"></canvas>
+    <p id="status" role="status">Initializing WebGL…</p>
+    <p class="note">Cubes in the terrain use translation and Y scaling; the sky objects reuse the same cube mesh with 3-axis scaling, translation, and rotation. Higher grid resolutions may be slower on older computers.</p>
+    <!-- LEVEL 4 DOCUMENTATION: Explain how normals and light interact. -->
+    <details>
+      <summary>How Level 4 lighting works</summary>
+      <p>Every face of the shared cube has an outward-pointing <strong>normal vector</strong> (±X, ±Y or ±Z). The vertex shader transforms that normal with the cube's rotation and inverse scale, so lighting works even when parts are rotated or stretched. The fragment shader implements <strong>ambient + Lambert diffuse + Blinn–Phong specular</strong> lighting. Ambient light makes shadow-facing sides visible, Lambert diffuse uses <code>max(dot(N,L), 0)</code> to brighten faces oriented toward the sun, and specular highlights use the half-vector between sun and camera directions. Sun azimuth and elevation control the world-space light direction. Disabling lighting shows the original vertex colors.</p>
+      <p>The light is directional (like distant sunlight), so all cube objects share one direction; this is a lighting calculation, not shadow mapping. Cubes do not cast shadows onto one another. The sliders update every frame without rebuilding the terrain.</p>
+    </details>
+    <!-- REQUIRED DOCUMENTATION: Explain the chosen path and how motion restarts. -->
+    <details open>
+      <summary>How the cubic Bézier sky paths work</summary>
+      <p>A moving cloud, a blimp, and two birds follow <strong>cubic Bézier curves</strong> using four 3D control points: P₀ is the start, P₁ and P₂ bend the route, and P₃ is the end. At normalized time <code>t</code> between 0 and 1, the position is <code>B(t) = (1−t)³P₀ + 3(1−t)²tP₁ + 3(1−t)t²P₂ + t³P₃</code>. The code computes the X, Y, and Z coordinates separately, and uses the curve derivative to rotate the blimp and birds along their travel direction.</p>
+      <p>Each object has its own duration and phase offset. When its travel time reaches the duration, the modulo operator (<code>%</code>) resets <code>t</code> to zero; it reappears at P₀ and repeats the journey. Path endpoints are deliberately outside the main grid, so the return normally happens beyond the visible landscape. The floating island and two other clouds remain stationary.</p>
+    </details>
+  </main>
+
+  <script>
+    "use strict"; // Make JavaScript report more programming mistakes instead of silently accepting them. Avoid pitfalls
+
+    // SECTION 1 — DOM ELEMENTS: Find the canvas and controls declared above.
+    const canvas = document.getElementById("scene"); // Obtain the element WebGL draws into.
+    const resolutionSelect = document.getElementById("resolution"); // Grid size selector.
+    const qualitySelect = document.getElementById("quality"); // Pixel-resolution selector.
+    const regenerateButton = document.getElementById("regenerate"); // New procedural landscape button.
+    const pauseButton = document.getElementById("pause"); // Camera animation button.
+    const status = document.getElementById("status"); // Status and FPS text.
+    // PART D — Camera target controls: input sliders, output labels and reset button.
+    const targetInputs = ["X", "Y", "Z"].map(axis => document.getElementById("target" + axis)); // X/Y/Z input elements.
+    const targetOutputs = ["X", "Y", "Z"].map(axis => document.getElementById("target" + axis + "Value")); // Matching numeric labels.
+    const targetReadout = document.getElementById("targetReadout"); // Full target vector shown to the user.
+    const resetTargetButton = document.getElementById("resetTarget"); // Restore default look-at point.
+    const skySpeedInput = document.getElementById("skySpeed"); // Speed multiplier control for the animated sky.
+    const skySpeedValue = document.getElementById("skySpeedValue"); // Display the current speed multiplier.
+    const pauseSkyButton = document.getElementById("pauseSky"); // Stop or resume sky motion without pausing camera.
+    const cameraTarget = [0, 0, 0]; // Mutable world-space position the camera will look toward.
+    // LEVEL 4: Locate lighting controls. Values will be sent to GPU uniforms every frame.
+    const lightAzimuth = document.getElementById("lightAzimuth"); // Sun heading in degrees around Y.
+    const lightElevation = document.getElementById("lightElevation"); // Sun angle above the horizon.
+    const ambientLevel = document.getElementById("ambientLevel"); // Minimum ambient illumination.
+    const sunStrength = document.getElementById("sunStrength"); // Directional diffuse brightness.
+    const lightingEnabled = document.getElementById("lightingEnabled"); // Lighting on/off comparison switch.
+    const resetLighting = document.getElementById("resetLighting"); // Restore initial lighting values.
+    function syncLightingLabels() { // Make displayed values agree with the slider inputs.
+      document.getElementById("lightAzimuthOut").textContent = lightAzimuth.value + "°";
+      document.getElementById("lightElevationOut").textContent = lightElevation.value + "°";
+      document.getElementById("ambientOut").textContent = Number(ambientLevel.value).toFixed(2);
+      document.getElementById("sunStrengthOut").textContent = Number(sunStrength.value).toFixed(2);
+    }
+    [lightAzimuth, lightElevation, ambientLevel, sunStrength].forEach(input =>
+      input.addEventListener("input", syncLightingLabels) // Update numerical readouts as sliders move.
+    );
+    resetLighting.addEventListener("click", () => { // Restore the original sunny daytime lighting.
+      lightAzimuth.value = "45"; lightElevation.value = "50";
+      ambientLevel.value = "0.30"; sunStrength.value = "0.90";
+      lightingEnabled.checked = true; syncLightingLabels();
+    });
+    syncLightingLabels(); // Initialize slider readouts before the first frame.
+
+    // SECTION 2 — CONTEXT: Request WebGL 1 for compatibility with older WebGL browsers.
+    const gl = canvas.getContext("webgl", { antialias: true, alpha: false }) ||
+               canvas.getContext("experimental-webgl", { antialias: true, alpha: false });
+    if (!gl) { // Provide a useful fallback if no WebGL implementation exists.
+      status.textContent = "WebGL is unavailable. Try a WebGL-compatible browser with hardware acceleration enabled.";
+    } else {
+      try { // Catch shader, buffer, and rendering setup errors.
+        // SECTION 3 — SHADERS: The vertex shader transforms vertices and passes their colors onward.
+        // LEVEL 4 VERTEX SHADER: Forward surface position, color and correctly rotated normal.
+        // Normal vectors are needed to determine whether a face points toward the light.
+        const vertexShaderSource = `
+          attribute vec3 aPosition;      // One cube corner in untransformed local space.
+          attribute vec3 aColor;         // Original procedural RGB vertex color.
+          attribute vec3 aNormal;        // Outward unit vector for one cube face.
+          uniform mat4 uViewProjection;  // Camera view and perspective combined.
+          uniform vec3 uOffset;          // Per-cube world-space translation.
+          uniform vec3 uScale;           // Per-cube X/Y/Z size, including terrain height.
+          uniform mat3 uRotation;        // Per-cube 3x3 orientation.
+          uniform vec3 uTint;            // Part-specific color used by clouds, birds, etc.
+          uniform float uSkyMode;        // 0=terrain, 1=sky-object colors.
+          varying vec3 vColor;           // Unlit RGB color interpolated across triangles.
+          varying vec3 vWorldNormal;     // Rotated and scaled surface normal in world space.
+          varying vec3 vWorldPosition;   // World-space position needed for specular highlights.
+
+          
+          void main() {
+            vec3 scaled = aPosition * uScale;         // SCALE the original cube vertex.
+            vec3 rotated = uRotation * scaled;        // ROTATE the scaled vertex.
+            vec3 world = rotated + uOffset;           // TRANSLATE it into the scene.
+            gl_Position = uViewProjection * vec4(world, 1.0); // Project into clip space.
+            // A normal transforms using inverse scale, not ordinary scale.
+            // All cube dimensions are positive, so component-wise division is safe.
+            vWorldNormal = normalize(uRotation * (aNormal / uScale));
+            vWorldPosition = world;                    // Pass vertex world position to fragment shader.
+            vColor = mix(aColor, uTint * (0.92 + 0.08 * aColor.g), uSkyMode);
+          }
+        `;
+        // LEVEL 4 FRAGMENT SHADER: Ambient + Lambert diffuse + Blinn-Phong specular.
+        // Computing lighting per fragment gives smooth results even as sky objects rotate.
+        const fragmentShaderSource = `
+          precision mediump float; // Widely supported WebGL 1 fragment precision.
+          varying vec3 vColor;         // Interpolated original surface color (albedo).
+          varying vec3 vWorldNormal;   // Interpolated outward surface normal.
+          varying vec3 vWorldPosition; // Fragment's approximate world position.
+          uniform vec3 uLightDirection; // Normalized direction FROM surface TOWARD sunlight.
+          uniform vec3 uCameraPosition; // Camera eye position in world coordinates.
+          uniform float uAmbient;       // Ambient brightness: light visible on every face.
+          uniform float uDiffuse;       // Brightness of the directional sun.
+          uniform float uLightingOn;    // 0=bypass lighting; 1=use lighting.
+          void main() {
+            vec3 N = normalize(vWorldNormal);       // Normalize interpolated surface normal.
+            vec3 L = normalize(uLightDirection);    // Direction toward sun.
+            float lambert = max(dot(N, L), 0.0);    // Lambert's cosine law; no negative light.
+            vec3 V = normalize(uCameraPosition - vWorldPosition); // Direction toward viewer.
+            vec3 H = normalize(L + V);              // Blinn-Phong half-vector.
+            float highlight = pow(max(dot(N, H), 0.0), 32.0); // Tight, soft highlight.
+            highlight *= step(0.001, lambert);       // Highlights only on sun-facing surfaces.
+            vec3 diffuseColor = vColor * (uAmbient + uDiffuse * lambert);
+            vec3 specularColor = vec3(0.12 * uDiffuse * highlight); // Subtle white reflected light.
+            vec3 lit = diffuseColor + specularColor; // Combine all lighting contributions.
+            vec3 result = mix(vColor, lit, uLightingOn); // Allow original-vs-lit comparison.
+            gl_FragColor = vec4(clamp(result, 0.0, 1.0), 1.0); // Opaque final pixel.
+          }
+        `;
+
+        // Compile one shader from GLSL source and report meaningful compiler errors.
+        function compile(type, source) {
+          const shader = gl.createShader(type); // Allocate an empty GPU shader.
+          gl.shaderSource(shader, source); // Attach GLSL source text.
+          gl.compileShader(shader); // Ask the GPU driver to compile it.
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) { // Inspect compile result.
+            const message = gl.getShaderInfoLog(shader); // Retrieve compiler diagnostics.
+            gl.deleteShader(shader); // Free the failed shader.
+            throw new Error(message); // Stop setup with the diagnostic.
+          }
+          return shader; // Return the usable compiled shader.
+        }
+
+        // SECTION 4 — SHADER PROGRAM: Join the vertex and fragment stages.
+        const vertexShader = compile(gl.VERTEX_SHADER, vertexShaderSource); // Compile vertex stage.
+        const fragmentShader = compile(gl.FRAGMENT_SHADER, fragmentShaderSource); // Compile fragment stage.
+        const program = gl.createProgram(); // Allocate a GPU shader program.
+        gl.attachShader(program, vertexShader); // Attach compiled vertex code.
+        gl.attachShader(program, fragmentShader); // Attach compiled fragment code.
+        gl.linkProgram(program); // Link both stages into one executable pipeline.
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) { // Verify program linking.
+          throw new Error(gl.getProgramInfoLog(program)); // Report link errors.
+        }
+        gl.deleteShader(vertexShader); // Linked program no longer needs separate shader object.
+        gl.deleteShader(fragmentShader); // Free the other shader object as well.
+        gl.useProgram(program); // Select this program for drawing.
+
+        // SECTION 5 — SHARED CUBE MESH (AI Assistance): Build one unit cube and reuse it for every grid cell.
+        // The cube spans -0.5 to +0.5 on x, y, z (one unit each before scaling).
+        // A small gap between cells is achieved by spacing cell centers 1 unit apart and using 0.94-wide geometry.
+        // Each face has four unique vertices, allowing adjacent faces to receive different colors.
+        const s = 0.47; // Half-width and half-depth; leaves a visible 0.06-unit gap between cells.
+        const faceCorners = [ // Six faces, four vertices per face, counterclockwise from outside.
+          [[-s,-0.5, s],[ s,-0.5, s],[ s, 0.5, s],[-s, 0.5, s]], // Front (+z).
+          [[ s,-0.5,-s],[-s,-0.5,-s],[-s, 0.5,-s],[ s, 0.5,-s]], // Back (-z).
+          [[-s, 0.5, s],[ s, 0.5, s],[ s, 0.5,-s],[-s, 0.5,-s]], // Top (+y).
+          [[-s,-0.5,-s],[ s,-0.5,-s],[ s,-0.5, s],[-s,-0.5, s]], // Bottom (-y).
+          [[ s,-0.5, s],[ s,-0.5,-s],[ s, 0.5,-s],[ s, 0.5, s]], // Right (+x).
+          [[-s,-0.5,-s],[-s,-0.5, s],[-s, 0.5, s],[-s, 0.5,-s]]  // Left (-x).
+        ];
+        const positions = []; // Flattened xyz coordinates of all cube face vertices.
+        const colors = []; // Flattened RGB vertex colors matching the positions array.
+        const normals = []; // Per-face outward normals; essential for diffuse and specular lighting.
+        const faceNormals = [ // Normal directions match the six faces defined above.
+          [0,0,1], [0,0,-1], [0,1,0], [0,-1,0], [1,0,0], [-1,0,0]
+        ];
+        const indices = []; // Triangle indices that reuse each face's four vertices.
+        const faceBrightness = [0.83,0.65,1.0,0.46,0.77,0.70]; // Face-specific lighting-like tint.
+        faceCorners.forEach((face, faceIndex) => { // Process every face of the shared cube.
+          const base = positions.length / 3; // First vertex index for this face.
+          face.forEach((corner, cornerIndex) => { // Process each of the four face corners.
+            positions.push(...corner); // Add this vertex position to the buffer.
+            normals.push(...faceNormals[faceIndex]); // Keep a hard-edged normal on every cube face.
+            const yShade = corner[1] > 0 ? 1.0 : 0.71; // Make the top corners lighter.
+            const cornerShade = [0.91,0.99,0.78,0.87][cornerIndex]; // Vary color within the face.
+            const shade = faceBrightness[faceIndex] * yShade * cornerShade; // Combine shading factors.
+            colors.push(0.24 * shade, 0.84 * shade, 0.52 * shade); // Procedural green RGB color.
+          });
+          indices.push(base, base+1, base+2, base, base+2, base+3); // Two triangles per face.
+        });
+        // In total there are 24 face vertices and 36 indices for 12 triangles.
+        function uploadBuffer(target, data) { // Utility for creating a GPU array or index buffer.
+          const buffer = gl.createBuffer(); // Allocate a GPU buffer.
+          gl.bindBuffer(target, buffer); // Select that buffer for the requested target.
+          gl.bufferData(target, data, gl.STATIC_DRAW); // Copy immutable geometry onto the GPU.
+          return buffer; // Keep a reference to the buffer.
+        }
+        const positionBuffer = uploadBuffer(gl.ARRAY_BUFFER, new Float32Array(positions)); // GPU positions.
+        const colorBuffer = uploadBuffer(gl.ARRAY_BUFFER, new Float32Array(colors)); // GPU vertex RGB colors.
+        const normalBuffer = uploadBuffer(gl.ARRAY_BUFFER, new Float32Array(normals)); // GPU normals; one per vertex.
+        const indexBuffer = uploadBuffer(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices)); // GPU triangles.
+        function enableAttribute(name, buffer) { // Connect a named shader attribute to a buffer.
+          const location = gl.getAttribLocation(program, name); // Locate the attribute in the shader.
+          gl.bindBuffer(gl.ARRAY_BUFFER, buffer); // Make the attribute's data buffer current.
+          gl.enableVertexAttribArray(location); // Tell WebGL this attribute uses per-vertex data.
+          gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 0, 0); // Read three floats per vertex.
+        }
+        enableAttribute("aPosition", positionBuffer); // Positions drive cube geometry.
+        enableAttribute("aColor", colorBuffer); // Colors are interpolated between corners.
+        enableAttribute("aNormal", normalBuffer); // Normals determine the direction each face points.
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer); // Make triangle indices available for drawing.
+        const viewProjectionLocation = gl.getUniformLocation(program, "uViewProjection"); // Camera matrix uniform.
+        const offsetLocation = gl.getUniformLocation(program, "uOffset"); // Translation uniform.
+        const scaleLocation = gl.getUniformLocation(program, "uScale"); // Three-dimensional scale uniform.
+        const rotationLocation = gl.getUniformLocation(program, "uRotation"); // Three-dimensional orientation uniform.
+        const tintLocation = gl.getUniformLocation(program, "uTint"); // Sky-object RGB tint uniform.
+        const skyModeLocation = gl.getUniformLocation(program, "uSkyMode"); // Select terrain or sky vertex colors.
+        // LEVEL 4: Retrieve GPU uniform locations for lighting inputs.
+        const lightDirLocation = gl.getUniformLocation(program, "uLightDirection"); // Sun's world direction.
+        const cameraPosLocation = gl.getUniformLocation(program, "uCameraPosition"); // Eye for shiny highlight.
+        const ambientLocation = gl.getUniformLocation(program, "uAmbient"); // Fill-light brightness.
+        const diffuseLocation = gl.getUniformLocation(program, "uDiffuse"); // Direct sunlight brightness.
+        const lightingOnLocation = gl.getUniformLocation(program, "uLightingOn"); // Enable/disable lighting.
+        const identityRotation = new Float32Array([1,0,0, 0,1,0, 0,0,1]); // No rotation for landscape columns.
+
+        // SECTION 6 — LANDSCAPE DATA: Build a centered N-by-N grid of cube instances.
+        let cubes = []; // Array of cube center positions and their y-scale values.
+        let seed = 1; // Changes when the user regenerates the terrain.
+        let gridSize = Number(resolutionSelect.value); // Selected number of cubes in each direction.
+        function heightAt(x, z, variant) { // Smooth, deterministic procedural terrain function.
+          const hill1 = 4.2 * Math.exp(-((x+5)*(x+5)+(z-3)*(z-3))/105); // Rounded hill A.
+          const hill2 = 3.0 * Math.exp(-((x-6)*(x-6)+(z+5)*(z+5))/70); // Rounded hill B.
+          const waves = 0.65 * Math.sin(x * 0.38 + variant) * Math.cos(z * 0.30 - variant); // Ripples.
+          return Math.max(0.24, 0.5 + hill1 + hill2 + waves); // Never return a zero/negative height.
+        }
+        function generateLandscape() { // Rebuild cube locations after size or seed changes.
+          gridSize = Number(resolutionSelect.value); // Convert the selection to a number.
+          cubes = []; // Discard previous instance data.
+          const center = (gridSize - 1) / 2; // Center grid around world x=0 and z=0.
+          for (let z = 0; z < gridSize; z++) { // Visit every grid row (depth).
+            for (let x = 0; x < gridSize; x++) { // Visit every column (horizontal).
+              const worldX = x - center; // Translate cell index into centered x coordinate.
+              const worldZ = z - center; // Translate cell index into centered z coordinate.
+              const height = heightAt(worldX, worldZ, seed * 0.71); // Calculate y scaling.
+              cubes.push({ x: worldX, y: height * 0.5 - 0.8, z: worldZ, height }); // Bottom of each column rests at y=-0.8.
+            }
+          }
+        }
+        generateLandscape(); // Build the first landscape at page load.
+        resolutionSelect.addEventListener("change", generateLandscape); // Compare 12², 24², 40², and 64² grids.
+        regenerateButton.addEventListener("click", () => { seed += 1; generateLandscape(); }); // New height pattern.
+
+        // SECTION 7 — CUBE-BUILT SKY OBJECTS AND CUBIC BÉZIER ANIMATION.
+        // Every component below is the SAME shared cube, individually scaled, rotated and translated.
+        // A part is [local offset XYZ, size XYZ in world units, RGB tint, optional local wing roll].
+        // The core cube is 0.94 units across in X/Z, so drawSkyPart compensates for that geometry.
+        const cloudParts = [ // Several overlapping cubes produce a stylized fluffy pixel-art cloud.
+          [[0,0,0], [2.6,0.95,1.35], [0.90,0.95,1.00]],
+          [[-1.05,0.24,0], [1.65,1.14,1.10], [0.98,0.99,1.00]],
+          [[0.85,0.35,0.05], [1.9,1.34,1.10], [0.95,0.97,1.00]],
+          [[0,-0.30,0], [3.4,0.52,1.10], [0.77,0.87,0.98]],
+          [[0.15,0.02,0.55], [1.7,0.84,0.8], [0.89,0.94,1.00]]
+        ];
+        const blimpParts = [ // Envelope, cabin, tail fins, and a tail-mounted propeller.
+          [[0,0,0], [4.8,1.45,1.55], [0.98,0.66,0.34]],
+          [[-1.15,0.20,0], [1.4,1.17,1.65], [1.00,0.78,0.46]],
+          [[0.35,-1.04,0], [1.65,0.63,1.00], [0.31,0.54,0.73]],
+          [[2.38,0.04,0], [0.68,1.22,0.22], [0.95,0.88,0.59]],
+          [[2.32,0.02,0], [0.70,0.20,1.45], [0.95,0.88,0.59]],
+          [[2.75,0.0,0], [0.15,1.10,0.12], [0.26,0.32,0.42]]
+        ];
+        const birdParts = [ // Central body, head, tail, and two rotatable wings.
+          [[0,0,0], [1.05,0.42,0.54], [0.23,0.34,0.49]],
+          [[-0.63,0.13,0], [0.40,0.38,0.40], [0.31,0.43,0.58]],
+          [[0.64,0.05,0], [0.56,0.18,0.47], [0.30,0.40,0.49]],
+          [[-0.02,0.10,-0.79], [0.43,0.13,1.30], [0.55,0.71,0.85], 0.0],
+          [[-0.02,0.10,0.79], [0.43,0.13,1.30], [0.55,0.71,0.85], 0.0]
+        ];
+        const islandParts = [ // A floating grassy platform with an earth/stone underside and a tree.
+          [[0,0,0], [5.0,0.68,3.2], [0.40,0.79,0.45]],
+          [[0,-0.76,0], [4.10,0.85,2.65], [0.48,0.40,0.30]],
+          [[0,-1.46,0], [2.55,0.65,1.85], [0.53,0.45,0.40]],
+          [[-1.15,0.98,0], [0.43,1.7,0.45], [0.48,0.34,0.21]],
+          [[-1.15,2.06,0], [1.9,1.35,1.65], [0.25,0.66,0.37]],
+          [[1.25,0.46,0.70], [0.72,0.72,0.72], [0.90,0.78,0.43]]
+        ];
+
+        // Evaluate the CUBIC Bézier formula independently on x, y and z. AI assistance sought
+        // P0 = start, P1/P2 = handles that bend the path, P3 = end.
+        // B(t)=(1-t)^3 P0 + 3(1-t)^2 t P1 + 3(1-t)t^2 P2 + t^3 P3, 0<=t<=1.
+        function cubicBezier(p0, p1, p2, p3, t) {
+          const u = 1 - t; // Remaining fraction of the trip.
+          return [0,1,2].map(i => u*u*u*p0[i] + 3*u*u*t*p1[i] + 3*u*t*t*p2[i] + t*t*t*p3[i]);
+        }
+        // The derivative B'(t) points along the tangent; blimp/birds turn to face travel direction.
+        function cubicBezierTangent(p0,p1,p2,p3,t) {
+          const u = 1 - t;
+          return [0,1,2].map(i => 3*u*u*(p1[i]-p0[i]) + 6*u*t*(p2[i]-p1[i]) + 3*t*t*(p3[i]-p2[i]));
+        }
+        // Rotate an object around Y (heading) and optionally around Z (roll/flapping).
+        // A column-major 3x3 matrix represents R_y(yaw) * R_z(roll).
+        function skyRotation(yaw, roll = 0) {
+          const cy=Math.cos(yaw), sy=Math.sin(yaw), cr=Math.cos(roll), sr=Math.sin(roll);
+          return new Float32Array([cy*cr,sr,-sy*cr, -cy*sr,cr,sy*sr, sy,0,cy]);
+        }
+        // Time in seconds advances independently of the orbit camera.
+        let skyClock = 0; // Increases only when sky motion is enabled.
+        let skyPaused = false; // Sky motion has its own pause control.
+        skySpeedInput.addEventListener("input", () => { skySpeedValue.textContent = Number(skySpeedInput.value).toFixed(2) + "×"; });
+        pauseSkyButton.addEventListener("click", () => {
+          skyPaused = !skyPaused; // Toggle animation state without affecting the camera.
+          pauseSkyButton.textContent = skyPaused ? "Resume sky objects" : "Pause sky objects";
+        });
+
+        // Draw ONE scaled, rotated and translated sub-cube of a sky object.
+        function drawSkyPart(position, size, color, yaw = 0, roll = 0) {
+          gl.uniform3f(offsetLocation, position[0], position[1], position[2]); // TRANSLATE into world space.
+          gl.uniform3f(scaleLocation, size[0] / 0.94, size[1], size[2] / 0.94); // SCALE all three axes.
+          gl.uniformMatrix3fv(rotationLocation, false, skyRotation(yaw, roll)); // ROTATE the sub-cube.
+          gl.uniform3f(tintLocation, color[0], color[1], color[2]); // Give this component its own color.
+          gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0); // Reuse existing cube indices.
+        }
+        // Draw an entire object by composing its sub-cubes around the object's center.
+        function drawSkyObject(parts, center, yaw, wingFlap = 0) {
+          const cy = Math.cos(yaw), sy = Math.sin(yaw); // Parent rotation about world Y axis.
+          for (let i = 0; i < parts.length; i++) {
+            const [local, size, color] = parts[i]; // Local offset, physical dimensions, and RGB.
+            const x = cy*local[0] + sy*local[2]; // Rotate local X/Z offset with the object's heading.
+            const z = -sy*local[0] + cy*local[2]; // Apply same parent rotation to Z offset.
+            const roll = parts === birdParts && i >= 3 ? (i === 3 ? 1 : -1) * wingFlap : 0; // Animate wings.
+            drawSkyPart([center[0]+x, center[1]+local[1], center[2]+z], size, color, yaw, roll);
+          }
+        }
+        // Use dynamic path widths so the sky scales with 12x12 through 64x64 landscapes.
+        function drawSky() {
+          gl.uniform1f(skyModeLocation, 1); // Sky cubes use individual part colors rather than terrain greens.
+          const span = Math.max(15, gridSize * 0.68); // Begin/end outside the edges of most grid views.
+          const skyY = 8 + gridSize * 0.08; // Keep moving objects above the tallest landscape hills.
+          // Static scenery remains visible, even when moving objects are paused.
+          drawSkyObject(cloudParts, [-span*0.45, skyY+3.3, -span*0.35], 0.16); // Static cloud A.
+          drawSkyObject(cloudParts, [span*0.55, skyY+4.9, span*0.25], -0.10); // Static cloud B.
+          drawSkyObject(islandParts, [span*0.60, skyY+1.8, -span*0.62], 0.35); // Floating island.
+
+          // Object definitions include FOUR 3D control points, duration, and a start phase.
+          const moving = [
+            { parts: blimpParts, duration: 23, phase: 0.14, points: [
+              [-span*1.40,skyY+1.4,-span*.65],[-span*.6,skyY+5,span*.25],
+              [span*.55,skyY+2.0,-span*.25],[span*1.45,skyY+2.6,span*.60]
+            ]},
+            { parts: cloudParts, duration: 35, phase: 0.48, points: [
+              [span*1.35,skyY+3.9,-span*.55],[span*.60,skyY+4.9,-span*.1],
+              [-span*.65,skyY+3.1,span*.45],[-span*1.4,skyY+4.0,span*.75]
+            ]},
+            { parts: birdParts, duration: 15, phase: 0.25, points: [
+              [-span*1.35,skyY-.6,span*.50],[-span*.4,skyY+1.8,span*.72],
+              [span*.55,skyY+3.0,-span*.37],[span*1.3,skyY+.2,-span*.72]
+            ]},
+            { parts: birdParts, duration: 18, phase: 0.68, points: [
+              [span*1.30,skyY+.2,span*.70],[span*.65,skyY+3.1,span*.35],
+              [-span*.5,skyY+.4,-span*.35],[-span*1.30,skyY+1.4,-span*.60]
+            ]}
+          ];
+          for (const object of moving) {
+            // Modulo wraps back to t=0 at the end of every completed journey.
+            const t = ((skyClock / object.duration + object.phase) % 1 + 1) % 1;
+            const [p0,p1,p2,p3] = object.points; // Destructure the four Bézier control points.
+            const center = cubicBezier(p0,p1,p2,p3,t); // Position along the curved 3D path.
+            const tangent = cubicBezierTangent(p0,p1,p2,p3,t); // Instantaneous travel direction.
+            const yaw = object.parts === cloudParts ? 0.08 : Math.atan2(-tangent[2], tangent[0]); // Turn nose along travel path.
+            const wingFlap = object.parts === birdParts ? Math.sin(skyClock*8) * 0.42 : 0; // Dynamic bird wing tilt.
+            drawSkyObject(object.parts, center, yaw, wingFlap); // Draw each component of the moving object.
+          }
+        }
+
+        // SECTION 7 — MATRIX MATH: Matrices are column-major, as WebGL expects.
+        function multiply(a, b) { // Return 4x4 matrix product a*b.
+          const out = new Float32Array(16); // Allocate sixteen output values.
+          for (let c=0; c<4; c++) { // Iterate the output's columns.
+            for (let r=0; r<4; r++) { // Iterate the output's rows.
+              for (let k=0; k<4; k++) { // Calculate dot product along the common dimension.
+                out[c*4+r] += a[k*4+r] * b[c*4+k]; // Sum products in column-major order.
+              }
+            }
+          }
+          return out; // Return the composed transformation.
+        }
+        function perspective(fov, aspect, near, far) { // Perspective camera projection.
+          const f = 1 / Math.tan(fov/2); // Focal length for the chosen vertical field of view.
+          return new Float32Array([ // WebGL-compatible perspective matrix.
+            f/aspect,0,0,0,
+            0,f,0,0,
+            0,0,(far+near)/(near-far),-1,
+            0,0,(2*far*near)/(near-far),0
+          ]);
+        }
+        function normalize(v) { // Make a vector length exactly one.
+          const length = Math.hypot(v[0],v[1],v[2]) || 1; // Avoid division by zero.
+          return [v[0]/length,v[1]/length,v[2]/length]; // Return normalized coordinates.
+        }
+        function cross(a,b) { // Cross product returns a vector perpendicular to a and b.
+          return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+        }
+        function dot(a,b) { // Dot product measures alignment between two vectors.
+          return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+        }
+        function lookAt(eye, target, up) { // Construct camera view matrix looking at a point.
+          const forward = normalize([eye[0]-target[0],eye[1]-target[1],eye[2]-target[2]]); // Camera backward axis.
+          const right = normalize(cross(up, forward)); // Camera right axis.
+          const actualUp = cross(forward, right); // Correct camera up axis.
+          return new Float32Array([ // Rotation plus negative camera translation.
+            right[0],actualUp[0],forward[0],0,
+            right[1],actualUp[1],forward[1],0,
+            right[2],actualUp[2],forward[2],0,
+            -dot(right,eye),-dot(actualUp,eye),-dot(forward,eye),1
+          ]);
+        }
+
+        // SECTION 8 — CAMERA ANIMATION AND SLIDERS: Orbit the selected look-at target.
+        // Each slider's input event is handled immediately, even during animation or pause.
+        function updateCameraTarget() { // Copy the three current slider values into the camera target vector.
+          for (let axis = 0; axis < 3; axis++) { // 0 means X, 1 means Y, 2 means Z.
+            cameraTarget[axis] = Number(targetInputs[axis].value); // Convert HTML input text into a numeric coordinate.
+            targetOutputs[axis].textContent = cameraTarget[axis].toFixed(1); // Display a value next to each slider.
+          }
+          targetReadout.textContent = `Current target: (${cameraTarget.map(value => value.toFixed(1)).join(", ")})`; // Display XYZ together.
+        }
+        targetInputs.forEach(input => input.addEventListener("input", updateCameraTarget)); // React immediately as any slider moves.
+        resetTargetButton.addEventListener("click", () => { // Reset the target to its original origin.
+          targetInputs.forEach(input => { input.value = "0"; }); // Set each slider back to zero.
+          updateCameraTarget(); // Refresh the target vector and all displayed numbers.
+        });
+        updateCameraTarget(); // Initialize labels and target before drawing the first frame.
+        let angle = 0; // Orbit angle measured in radians.
+        let paused = false; // Whether the camera should stop orbiting.
+        let lastFrame = 0; // Timestamp of the previous frame (milliseconds).
+        let fpsStart = 0; // Beginning of the current FPS measurement interval.
+        let frameCount = 0; // Number of frames in that interval.
+        let measuredFps = 0; // Most recently measured frames per second.
+        pauseButton.addEventListener("click", () => { // Toggle orbit on button press.
+          paused = !paused; // Reverse the current paused state.
+          pauseButton.textContent = paused ? "Resume camera" : "Pause camera"; // Update button label.
+        });
+
+        // SECTION 9 — RENDER SETTINGS: Draw nearer cubes in front of more distant cubes.
+        gl.enable(gl.DEPTH_TEST); // Enable depth buffer comparisons for correct 3D occlusion.
+        gl.enable(gl.CULL_FACE); // Skip back-facing triangles to reduce GPU work.
+        gl.frontFace(gl.CCW); // Declare counterclockwise winding to be the front side.
+        gl.clearColor(0.035,0.075,0.12,1.0); // Choose an atmospheric dark background.
+
+        // SECTION 10 — MAIN LOOP: Recalculate camera, draw every cube, and request another frame.
+        function render(timestamp) { // Browser calls this function once for each displayed frame.
+          const dt = Math.min((timestamp - (lastFrame || timestamp))/1000, 0.05); // Seconds elapsed, capped after tab inactivity. AI suggestion
+          lastFrame = timestamp; // Save timestamp for the next frame.
+          if (!paused) angle += dt * 0.22; // Advance orbit at 0.22 radians per second.
+          if (!skyPaused) skyClock += dt * Number(skySpeedInput.value); // Advance Bézier animations separately.
+          const pixelRatio = qualitySelect.value === "high" ? Math.min(devicePixelRatio || 1, 2) : 0.65; // Pixel density choice.
+          const w = Math.max(1, Math.floor(canvas.clientWidth * pixelRatio)); // Drawing-buffer width.
+          const h = Math.max(1, Math.floor(canvas.clientHeight * pixelRatio)); // Drawing-buffer height.
+          if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } // Resize only as needed.
+          gl.viewport(0,0,w,h); // Tell the GPU to render to the whole drawing buffer.
+          gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); // Erase previous color and depth results.
+
+          const radius = gridSize * 1.18 + 10; // Back the camera away as the grid gets larger.
+          // Orbit around the slider-selected target, not the fixed origin.
+          // Offsetting the circular camera path by target X and Z keeps the focus point centered.
+          const eye = [cameraTarget[0] + Math.cos(angle)*radius, cameraTarget[1] + gridSize*0.60+8, cameraTarget[2] + Math.sin(angle)*radius]; // Camera location on orbit.
+          const view = lookAt(eye,cameraTarget,[0,1,0]); // Recalculate camera orientation to point directly at the chosen XYZ position.
+          const projection = perspective(Math.PI/3, w/h, 0.1, radius*5); // Build perspective projection.
+          const viewProjection = multiply(projection,view); // Combine projection and camera view.
+          gl.uniformMatrix4fv(viewProjectionLocation,false,viewProjection); // Send camera matrix once per frame.
+          // LEVEL 4: Convert lighting angles in degrees to a sun direction in 3D space.
+          // Azimuth rotates the light around the Y axis; elevation raises it above the x-z plane.
+          const azimuth = Number(lightAzimuth.value) * Math.PI / 180; // Degrees -> radians.
+          const elevation = Number(lightElevation.value) * Math.PI / 180; // Degrees -> radians.
+          const cosElevation = Math.cos(elevation); // Horizontal portion of the unit sun direction.
+          gl.uniform3f(lightDirLocation, // Direction TOWARD the distant sun (same everywhere).
+            cosElevation * Math.cos(azimuth), Math.sin(elevation), cosElevation * Math.sin(azimuth));
+          gl.uniform3f(cameraPosLocation, eye[0], eye[1], eye[2]); // Position for view-dependent highlights.
+          gl.uniform1f(ambientLocation, Number(ambientLevel.value)); // Ambient intensity slider.
+          gl.uniform1f(diffuseLocation, Number(sunStrength.value)); // Directional intensity slider.
+          gl.uniform1f(lightingOnLocation, lightingEnabled.checked ? 1 : 0); // Lighting checkbox.
+          gl.uniformMatrix3fv(rotationLocation, false, identityRotation); // Terrain columns are not rotated.
+          gl.uniform1f(skyModeLocation, 0); // Use Level 1's interpolated procedural vertex colors.
+          for (const cube of cubes) { // Draw one translated and scaled copy for every grid cell.
+            gl.uniform3f(offsetLocation,cube.x,cube.y,cube.z); // 3D TRANSLATION: move cube to grid position.
+            gl.uniform3f(scaleLocation,1,cube.height,1); // Y SCALING: stretch cube without changing X or Z.
+            gl.drawElements(gl.TRIANGLES,indices.length,gl.UNSIGNED_SHORT,0); // Draw the shared indexed cube.
+          }
+
+          drawSky(); // Draw stationary and moving sky objects after the terrain using depth testing.
+
+          frameCount++; // Count this rendered frame for FPS statistics.
+          if (timestamp - fpsStart >= 750) { // Update status roughly every three quarters of a second.
+            measuredFps = Math.round(frameCount*1000/Math.max(1,timestamp-fpsStart)); // Estimate frames per second.
+            frameCount = 0; // Reset counted frames.
+            fpsStart = timestamp; // Start another measurement period.
+            status.textContent = `${gridSize} x ${gridSize} = ${cubes.length.toLocaleString()} cubes | ${measuredFps} FPS | ${qualitySelect.value} quality | Bézier sky objects | lighting ${lightingEnabled.checked ? "on" : "off"}`; // Display results.
+          }
+          requestAnimationFrame(render); // Continue the animated camera orbit.
+        }
+        requestAnimationFrame(render); // Start animation on the next browser repaint.
+      } catch (error) { // Display any setup failure to the user.
+        console.error(error); // Keep detailed error diagnostics for developer tools.
+        status.textContent = "WebGL setup failed: " + error.message; // Show a readable error message.
+      }
+    }
+  </script>
+</body>
+</html>
